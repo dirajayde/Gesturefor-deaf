@@ -76,6 +76,227 @@
         }
     </style>
 
+    <!-- MediaPipe Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+    <div class="loading" id="loadingText">
+        🔄 sabar lok nam <br>
+        <small style="font-size: 14px; color: #aaa;">Mohon tunggu 5-10 detik</small>
+    </div>
+
+    <div class="status" id="statusText">
+        📊 Status: Menunggu kamera...
+    </div>
+
+    <div class="error" id="errorText"></div>
+
+    <div class="container">
+        <video id="input_video" playsinline></video>
+        <canvas id="output_canvas"></canvas>
+    </div>
+
+    <script>
+        const videoElement = document.getElementById('input_video');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const loadingText = document.getElementById('loadingText');
+        const statusText = document.getElementById('statusText');
+        const errorText = document.getElementById('errorText');
+
+        let faceCount = 0;
+        let handCount = 0;
+        let frameCount = 0;
+
+        // Fungsi untuk menampilkan error
+        function showError(message) {
+            errorText.style.display = 'block';
+            errorText.innerHTML = `❌ ${message}`;
+            loadingText.style.display = 'none';
+        }
+
+        // Fungsi untuk menampilkan status
+        function updateStatus(message) {
+            statusText.innerHTML = `📊 Status: ${message}`;
+        }
+
+        // Fungsi untuk menggambar hasil
+        function onResults(results) {
+            frameCount++;
+            
+            // Sembunyikan loading setelah beberapa frame
+            if (frameCount > 10) {
+                loadingText.style.display = 'none';
+            }
+            
+            // Set ukuran canvas
+            canvasElement.width = videoElement.videoWidth;
+            canvasElement.height = videoElement.videoHeight;
+            
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            
+            // Gambar video asli
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            // Update status
+            faceCount = results.multiFaceLandmarks ? results.multiFaceLandmarks.length : 0;
+            handCount = results.multiHandLandmarks ? results.multiHandLandmarks.length : 0;
+            updateStatus(`👤 Wajah: ${faceCount} | ✋ Tangan: ${handCount} | 🎬 Frame: ${frameCount}`);
+
+            // 1. FACE MESH - JARING WAJAH
+            if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+                console.log('✅ Face detected:', results.multiFaceLandmarks.length);
+                
+                for (const landmarks of results.multiFaceLandmarks) {
+                    // Gambar jaring wajah (FACEMESH_TESSELATION)
+                    drawConnectors(canvasCtx, landmarks, FACEMESH_TESSELATION, {
+                        color: '#00FF0080',
+                        lineWidth: 0.5
+                    });
+                    
+                    // Gambar titik-titik wajah
+                    drawLandmarks(canvasCtx, landmarks, {
+                        color: '#FF0000',
+                        lineWidth: 1,
+                        radius: 1
+                    });
+                }
+            } else {
+                console.log('❌ No face detected');
+            }
+
+            // 2. HAND TRACKING - TANGAN
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                console.log('✅ Hand detected:', results.multiHandLandmarks.length);
+                
+                for (const landmarks of results.multiHandLandmarks) {
+                    drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {
+                        color: '#00FFFF',
+                        lineWidth: 3
+                    });
+                    drawLandmarks(canvasCtx, landmarks, {
+                        color: '#00FFFF',
+                        lineWidth: 2,
+                        radius: 2
+                    });
+                }
+            }
+            
+            canvasCtx.restore();
+        }
+
+        // --- KONFIGURASI FACE MESH ---
+        const faceMesh = new FaceMesh({
+            locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
+            }
+        });
+
+        faceMesh.setOptions({
+            maxNumFaces: 1,
+            refineLandmarks: true,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5,
+            modelComplexity: 1
+        });
+
+        faceMesh.onResults(onResults);
+
+        // --- KONFIGURASI HANDS ---
+        const hands = new Hands({
+            locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+            }
+        });
+
+        hands.setOptions({
+            maxNumHands: 2,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        hands.onResults(onResults);
+
+        // --- SETUP KAMERA ---
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                try {
+                    await faceMesh.send({image: videoElement});
+                    await hands.send({image: videoElement});
+                } catch (error) {
+                    console.error('Error sending frame:', error);
+                }
+            },
+            width: 1280,
+            height: 720,
+            facingMode: 'user'
+        });
+
+        // --- START CAMERA ---
+        camera.start()
+            .then(() => {
+                console.log('✅ Camera started successfully');
+                updateStatus('📷 Kamera aktif - Hadapkan wajah ke kamera');
+            })
+            .catch(error => {
+                console.error('❌ Camera start error:', error);
+                showError('Gagal mengakses kamera!<br><br>1. Pastikan izin kamera diberikan<br>2. Coba browser lain (Chrome/Edge)<br>3. Pastikan tidak ada aplikasi lain yang menggunakan kamera');
+            });
+
+        // --- DEBUGGING ---
+        console.log('🚀 Face & Hand Tracking App Started');
+        console.log('📱 MediaPipe Libraries Loaded');
+    </script>
+</body>
+</html>            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-family: sans-serif;
+            font-size: 24px;
+            z-index: 10;
+            background: rgba(0,0,0,0.8);
+            padding: 20px;
+            border-radius: 10px;
+        }
+
+        .status {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-family: sans-serif;
+            font-size: 14px;
+            z-index: 10;
+            background: rgba(0,0,0,0.7);
+            padding: 10px;
+            border-radius: 5px;
+        }
+
+        .error {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #ff4444;
+            font-family: sans-serif;
+            font-size: 18px;
+            z-index: 10;
+            background: rgba(0,0,0,0.9);
+            padding: 20px;
+            border-radius: 10px;
+            display: none;
+        }
+    </style>
+
     
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
